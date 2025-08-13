@@ -1,12 +1,53 @@
 from gauge_eqn import GaussLawU1, build_hamiltonian, NetKetGaugeEq
 from constants import LEARNING_RATE, SR_DIAG_SHIFT, ITER_W
 import matplotlib.pyplot as plt
-from memory_profiler import memory_usage
+import numpy as np
+from time import time
+from utils import GPUMemProf, SystemMemProf
 from collections import defaultdict
 from netket.hilbert import Fock
 import netket as nk
 import numpy as np
 from time import time
+from utils import GPUMemProf
+import psutil
+
+
+def get_per_gpu(gpu_mem):
+    time = []
+    gpus = defaultdict(list)
+    gpu_max_mem = []
+
+    for sample in gpu_mem:
+        time.append(sample[0])
+        if not len(gpu_max_mem):
+            gpu_max_mem += [x[1] for x in sample[1]]
+        for i, gpu in enumerate(sample[1]):
+            gpus[i].append(gpu[0])
+    return np.array(time), gpus, np.array(gpu_max_mem)
+
+
+def plot_gpu_mem(gpu_mem, ax: plt.Axes):
+    time, gpus, gpu_max_mem = get_per_gpu(gpu_mem)
+    time = np.array(time)
+    time = time - time.min()
+    for gpu, gpu_mem_trace in gpus.items():
+        ax.plot(time, gpu_mem_trace, label=f"GPU {gpu}")
+    ax.hlines(y=gpu_max_mem[0], xmin=time.min(), xmax=time.max(), label="Max Memory", linestyles='-', colors='orange')
+    ax.legend()
+    plt.savefig("gpu_mem.png")
+
+
+def plot_sys_mem(mem_samples, ax: plt.Axes):
+    time = np.array([x[0] for x in mem_samples])
+    time = time - time.min()
+    mem = [x[1] for x in mem_samples]
+    ax.plot(time, mem, label="System Memory")
+    max_mem = psutil.virtual_memory().total / (1024**3)
+    ax.hlines(y=max_mem, xmin=time.min(), xmax=time.max(), label="Max Memory", linestyles='-', colors='orange')
+    ax.legend()
+    plt.savefig("sys_mem.png")
+
 
 def run_test(L, K, n_chains, g2, dtype, samples_per_chain, name: str):
     constraint = GaussLawU1(L, K)
@@ -25,10 +66,20 @@ def run_test(L, K, n_chains, g2, dtype, samples_per_chain, name: str):
     sr  = nk.optimizer.SR(diag_shift=SR_DIAG_SHIFT)
     vmc = nk.VMC(hamiltonian=H, optimizer=opt,
                     variational_state=vstate, preconditioner=sr)
+    gpu_prof = GPUMemProf(2)
+    sys_prof = SystemMemProf(0.2)
+    gpu_prof.start()
+    sys_prof.start()
     start = time()
-    mem_usage = memory_usage((vmc.run, (), {'n_iter': ITER_W}))
+    vmc.run(n_iter=ITER_W)
     end = time()
-    return (name, L, np.array(mem_usage), end - start) # TODO: Return the correct metric we are testing and not just L
+    gpu_mem = gpu_prof.stop()
+    sys_mem = sys_prof.stop()
+    plot_gpu_mem(gpu_mem, plt.gca())
+    plot_sys_mem(sys_mem, plt.gca())
+    # keep the same shape as previous return: convert sys_mem values to array of MB
+    mem_usage = np.array([v for (_, v) in sys_mem], dtype=float)
+    return (name, L, mem_usage, end - start) # TODO: Return the correct metric we are testing and not just L
 
 
 def main():
@@ -57,14 +108,15 @@ def main():
     tests += [(DEFAULT_L, DEFAULT_K, n_chains, g2, SAMPLER_DTYPE, SAMPLES_PER_CHAIN, "N_CHAINS") for n_chains in test_chains]
 
     for test in tests:
-        try:
+        # try:
             result = run_test(*test)
             results.append(result)
             print(f"Test with L={test[0]}, K={test[1]}, n_chains={test[2]}: "
               f"Memory usage: {result[2].mean()} MB, Time taken: {result[3]:.2f} seconds")
-        except Exception as e:
-            print(f"Error running test with parameters {test}: {e}")
-            continue
+            return
+        # except Exception as e:
+        #     print(f"Error running test with parameters {test}: {e}")
+        #     continue
 
     to_plot = defaultdict(list)
     for result in results:

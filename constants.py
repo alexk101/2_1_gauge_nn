@@ -25,7 +25,7 @@ SAMPLES_PER_CHAIN = 64
 N_SAMPLES         = N_CHAINS * SAMPLES_PER_CHAIN
 LEARNING_RATE     = 1e-3
 SR_DIAG_SHIFT     = 1e-2
-SAMPLER_DTYPE     = np.float32
+SAMPLER_DTYPE     = jax.numpy.bfloat16
 
 # Optimisation steps
 ITER_W       = 100    # for Wilson-loop optimisations

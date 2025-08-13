@@ -2,3 +2,5 @@
 uv.lock
 .venv
 outputs
+.python-version
+*.png
